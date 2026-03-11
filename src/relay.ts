@@ -21,6 +21,7 @@ import {
 import { getUnreadEmails, formatEmails } from "./gmail.ts";
 import { getTodayEvents, formatEvents } from "./calendar.ts";
 import { getAccessToken } from "./google-auth.ts";
+import { listJobs, enableJob, disableJob, addJob, removeJob, runJobNow, describeCron } from "./cron-manager.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -385,6 +386,7 @@ bot.api.setMyCommands([
   { command: "sync", description: "Sync Obsidian vault via Git" },
   { command: "links", description: "Access URLs for Pi services" },
   { command: "service", description: "Start/stop/restart services" },
+  { command: "cron", description: "Manage scheduled tasks" },
   { command: "search", description: "Search the web" },
   { command: "dev", description: "Browse ~/dev projects" },
   { command: "clear", description: "Clear chat history" },
@@ -608,6 +610,108 @@ bot.command("service", async (ctx) => {
   await ctx.reply(results.join("\n"));
 });
 
+// /cron — manage scheduled tasks
+bot.command("cron", async (ctx) => {
+  const arg = ctx.match?.toString().trim() || "";
+
+  // /cron (no args) — list all jobs
+  if (!arg) {
+    const jobs = await listJobs();
+    if (!jobs.length) {
+      await ctx.reply("No scheduled tasks found.\n\n/cron add <name> | <schedule> | <command> | <description>");
+      return;
+    }
+
+    const lines: string[] = ["*Scheduled Tasks*\n"];
+    for (const job of jobs) {
+      const icon = job.enabled ? "🟢" : "🔴";
+      const when = describeCron(job.schedule);
+      lines.push(`${icon} *${job.name}*`);
+      lines.push(`  ${when} — ${job.description}`);
+    }
+    lines.push(
+      `\n*Commands:*`,
+      `/cron start <name>`,
+      `/cron stop <name>`,
+      `/cron run <name>`,
+      `/cron add <name> | <schedule> | <command> | <desc>`,
+      `/cron remove <name>`,
+      `/cron logs <name>`
+    );
+    await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+    return;
+  }
+
+  const parts = arg.split(/\s+/);
+  const action = parts[0]?.toLowerCase();
+  const target = parts.slice(1).join(" ");
+
+  if (action === "start" && target) {
+    const ok = await enableJob(target);
+    await ctx.reply(ok ? `✅ *${target}* enabled` : `❌ Job "${target}" not found`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (action === "stop" && target) {
+    const ok = await disableJob(target);
+    await ctx.reply(ok ? `🔴 *${target}* disabled` : `❌ Job "${target}" not found`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (action === "run" && target) {
+    await ctx.reply(`⏳ Running *${target}*...`, { parse_mode: "Markdown" });
+    const result = await runJobNow(target);
+    const output = result.output.length > 500 ? result.output.slice(0, 500) + "..." : result.output;
+    await ctx.reply(
+      result.ok ? `✅ *${target}* completed\n\n${output}` : `❌ *${target}* failed\n\n${output}`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  if (action === "remove" && target) {
+    const ok = await removeJob(target);
+    await ctx.reply(ok ? `🗑 *${target}* removed` : `❌ Job "${target}" not found`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (action === "logs" && target) {
+    const logFile = `/tmp/${target.toLowerCase().replace(/\s+/g, "-")}.log`;
+    try {
+      const content = await readFile(logFile, "utf-8");
+      const last30 = content.split("\n").slice(-30).join("\n");
+      await ctx.reply(`*Logs: ${target}*\n\n${last30 || "(empty)"}`, { parse_mode: "Markdown" });
+    } catch {
+      await ctx.reply(`No logs found at ${logFile}`);
+    }
+    return;
+  }
+
+  if (action === "add") {
+    // /cron add Name | 0 8 * * * | command | description
+    const addParts = target.split("|").map(s => s.trim());
+    if (addParts.length < 3) {
+      await ctx.reply("Usage: /cron add <name> | <schedule> | <command> | <description>\n\nExample:\n/cron add Daily Backup | 0 6 * * * | scripts/backup.sh | Backup storage to NAS");
+      return;
+    }
+
+    const [name, schedule, command, description] = addParts;
+    await addJob({
+      name,
+      description: description || name,
+      schedule,
+      command,
+      enabled: true,
+    });
+    await ctx.reply(`✅ Added *${name}*\nSchedule: ${describeCron(schedule)}`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  await ctx.reply(
+    "Unknown action. Use:\n/cron — list tasks\n/cron start|stop|run|remove <name>\n/cron add <name> | <schedule> | <command> | <desc>\n/cron logs <name>"
+  );
+});
+
 // /help — show all capabilities
 bot.command("help", async (ctx) => {
   const voiceStatus = process.env.VOICE_PROVIDER ? "enabled" : "not configured";
@@ -647,6 +751,12 @@ bot.command("help", async (ctx) => {
     `/service — show service status\n` +
     `/service start|stop|restart <name> — control a service\n` +
     `Names: samba, filebrowser, syncthing, all\n\n` +
+    `*⏰ Scheduled Tasks*\n` +
+    `/cron — list all scheduled tasks\n` +
+    `/cron start|stop <name> — enable/disable a task\n` +
+    `/cron run <name> — run now\n` +
+    `/cron add <name> | <schedule> | <cmd> | <desc>\n` +
+    `/cron logs <name> — view recent logs\n\n` +
     `*⚙️ Session*\n` +
     `/status — full system status\n` +
     `/clear — clear chat history\n` +
@@ -1787,6 +1897,15 @@ function buildPrompt(
       );
     }
   }
+
+  parts.push(
+    "\nNOTE TOOLS:" +
+      "\nIMPORTANT: When the user wants to add a to-do, journal entry, health data, or quick note, " +
+      "ALWAYS use add_to_daily (it adds to today's daily note). " +
+      "Only use create_note for standalone notes that are NOT daily items (e.g. 'create a note about project X')." +
+      "\nExamples: 'aggiungi comprare latte ai todo' → add_to_daily(section: 'todo', content: 'comprare latte')" +
+      "\n'scrivi una nota sul meeting' → could be add_to_daily(section: 'notes') or create_note depending on context."
+  );
 
   parts.push(
     "\nMEMORY MANAGEMENT:" +
