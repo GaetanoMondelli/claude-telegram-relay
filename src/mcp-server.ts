@@ -364,29 +364,29 @@ async function handleCreateCalendarEvent(args: any): Promise<string> {
 
 async function gitSyncVault(): Promise<string> {
   try {
-    // Pull first to avoid push rejection
-    const pull = spawn(["git", "pull", "--rebase"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
+    const opts = { cwd: OBSIDIAN_VAULT, stdout: "pipe" as const, stderr: "pipe" as const };
+
+    // 1. Commit any local changes first (so pull --rebase never hits dirty worktree)
+    const status = spawn(["git", "status", "--porcelain"], opts);
+    const changes = (await new Response(status.stdout).text()).trim();
+    await status.exited;
+
+    if (changes) {
+      const add = spawn(["git", "add", "-A"], opts);
+      await add.exited;
+      const dateStr = new Date().toISOString().split("T")[0];
+      const commit = spawn(["git", "commit", "-m", `Auto sync ${dateStr}`], opts);
+      await commit.exited;
+    }
+
+    // 2. Pull remote changes (rebase local commits on top)
+    const pull = spawn(["git", "pull", "--rebase"], opts);
     const pullErr = (await new Response(pull.stderr).text()).trim();
     const pullCode = await pull.exited;
     if (pullCode !== 0) return `Git pull failed: ${pullErr}`;
 
-    // Check for local changes
-    const status = spawn(["git", "status", "--porcelain"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
-    const changes = (await new Response(status.stdout).text()).trim();
-    await status.exited;
-
-    if (!changes) return "No changes to sync.";
-
-    const add = spawn(["git", "add", "-A"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
-    await add.exited;
-
-    const dateStr = new Date().toISOString().split("T")[0];
-    const commit = spawn(["git", "commit", "-m", `Auto sync ${dateStr}`], {
-      cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe",
-    });
-    await commit.exited;
-
-    const push = spawn(["git", "push"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
+    // 3. Push everything
+    const push = spawn(["git", "push"], opts);
     const pushErr = (await new Response(push.stderr).text()).trim();
     const pushCode = await push.exited;
 

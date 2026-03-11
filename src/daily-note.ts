@@ -122,13 +122,15 @@ async function getCalendarSummary(): Promise<string> {
 
 async function gitSync(): Promise<void> {
   try {
-    const add = spawn(["git", "add", "-A"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
+    const opts = { cwd: OBSIDIAN_VAULT, stdout: "pipe" as const, stderr: "pipe" as const };
+    // Commit first, then pull --rebase, then push (avoids dirty worktree blocking pull)
+    const add = spawn(["git", "add", "-A"], opts);
     await add.exited;
-    const commit = spawn(["git", "commit", "-m", `Daily note ${getDateStr(new Date())}`], {
-      cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe",
-    });
+    const commit = spawn(["git", "commit", "-m", `Daily note ${getDateStr(new Date())}`], opts);
     await commit.exited;
-    const push = spawn(["git", "push"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
+    const pull = spawn(["git", "pull", "--rebase"], opts);
+    await pull.exited;
+    const push = spawn(["git", "push"], opts);
     await push.exited;
   } catch {
     // Git sync is best-effort

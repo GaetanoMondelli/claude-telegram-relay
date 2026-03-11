@@ -399,31 +399,31 @@ bot.api.setMyCommands([
 
 async function gitSync(repoPath: string): Promise<{ ok: boolean; output: string }> {
   try {
-    // Pull first, then add+commit any local changes, then push
-    const pull = spawn(["git", "pull", "--rebase"], { stdout: "pipe", stderr: "pipe", cwd: repoPath });
-    const pullOut = (await new Response(pull.stdout).text()).trim();
-    const pullErr = (await new Response(pull.stderr).text()).trim();
-    await pull.exited;
+    const opts = { stdout: "pipe" as const, stderr: "pipe" as const, cwd: repoPath };
 
-    // Check for local changes
-    const status = spawn(["git", "status", "--porcelain"], { stdout: "pipe", stderr: "pipe", cwd: repoPath });
+    // 1. Commit local changes first (so pull --rebase never hits dirty worktree)
+    const status = spawn(["git", "status", "--porcelain"], opts);
     const changes = (await new Response(status.stdout).text()).trim();
     await status.exited;
 
     let committed = false;
     if (changes) {
-      const add = spawn(["git", "add", "-A"], { stdout: "pipe", stderr: "pipe", cwd: repoPath });
+      const add = spawn(["git", "add", "-A"], opts);
       await add.exited;
-
-      const commit = spawn(["git", "commit", "-m", `Sync ${new Date().toISOString().split("T")[0]}`], {
-        stdout: "pipe", stderr: "pipe", cwd: repoPath,
-      });
+      const commit = spawn(["git", "commit", "-m", `Sync ${new Date().toISOString().split("T")[0]}`], opts);
       await commit.exited;
       committed = true;
     }
 
-    const push = spawn(["git", "push"], { stdout: "pipe", stderr: "pipe", cwd: repoPath });
-    const pushOut = (await new Response(push.stdout).text()).trim();
+    // 2. Pull remote changes (rebase local commits on top)
+    const pull = spawn(["git", "pull", "--rebase"], opts);
+    const pullOut = (await new Response(pull.stdout).text()).trim();
+    const pullErr = (await new Response(pull.stderr).text()).trim();
+    const pullCode = await pull.exited;
+    if (pullCode !== 0) return { ok: false, output: `Pull failed: ${pullErr}` };
+
+    // 3. Push everything
+    const push = spawn(["git", "push"], opts);
     const pushErr = (await new Response(push.stderr).text()).trim();
     const pushCode = await push.exited;
 
