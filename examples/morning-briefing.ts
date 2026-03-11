@@ -1,22 +1,75 @@
 /**
- * Morning Briefing Example
+ * Morning Briefing
  *
- * Sends a daily summary via Telegram at a scheduled time.
- * Customize this for your own morning routine.
+ * Sends a daily summary via Telegram: weather, calendar, emails, goals.
+ * Reads config from config/scheduled.json (copy from scheduled.example.json).
  *
- * Schedule this with:
- * - macOS: launchd (see daemon/morning-briefing.plist)
- * - Linux: cron or systemd timer
- * - Windows: Task Scheduler
+ * Schedule with cron:
+ *   0 8 * * * cd /path/to/relay && /home/USER/.bun/bin/bun run examples/morning-briefing.ts >> /tmp/briefing.log 2>&1
  *
- * Run manually: bun run examples/morning-briefing.ts
+ * Or run manually: bun run briefing
  */
+
+import { readFile } from "fs/promises";
+import { join, dirname } from "path";
+import { createClient } from "@supabase/supabase-js";
+import { getUnreadEmails, formatEmails } from "../src/gmail.ts";
+import { getTodayEvents, formatEvents } from "../src/calendar.ts";
+import { getAccessToken } from "../src/google-auth.ts";
+import { generateDailyNote } from "../src/daily-note.ts";
+
+const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_USER_ID || "";
+const USER_TIMEZONE = process.env.USER_TIMEZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
+const USER_NAME = process.env.USER_NAME || "";
 
 // ============================================================
-// TELEGRAM HELPER
+// LOAD CONFIG
+// ============================================================
+
+interface BriefingConfig {
+  briefings: Array<{
+    name: string;
+    enabled: boolean;
+    cron: string;
+    sections: {
+      weather?: { enabled: boolean; city: string };
+      calendar?: { enabled: boolean };
+      email?: { enabled: boolean; maxEmails?: number };
+      goals?: { enabled: boolean };
+    };
+    message_style?: string;
+  }>;
+}
+
+async function loadConfig(): Promise<BriefingConfig> {
+  try {
+    const content = await readFile(join(PROJECT_ROOT, "config", "scheduled.json"), "utf-8");
+    return JSON.parse(content);
+  } catch {
+    // Fallback defaults
+    return {
+      briefings: [
+        {
+          name: "morning",
+          enabled: true,
+          cron: "0 8 * * *",
+          sections: {
+            weather: { enabled: true, city: "London" },
+            calendar: { enabled: true },
+            email: { enabled: true, maxEmails: 10 },
+            goals: { enabled: true },
+          },
+        },
+      ],
+    };
+  }
+}
+
+// ============================================================
+// TELEGRAM
 // ============================================================
 
 async function sendTelegram(message: string): Promise<boolean> {
@@ -33,7 +86,6 @@ async function sendTelegram(message: string): Promise<boolean> {
         }),
       }
     );
-
     return response.ok;
   } catch (error) {
     console.error("Telegram error:", error);
@@ -42,121 +94,154 @@ async function sendTelegram(message: string): Promise<boolean> {
 }
 
 // ============================================================
-// DATA FETCHERS (customize these for your sources)
+// DATA FETCHERS
 // ============================================================
 
-async function getUnreadEmails(): Promise<string> {
-  // Example: Use Gmail API, IMAP, or MCP tool
-  // Return a summary of unread emails
-
-  // Placeholder - replace with your implementation
-  return "- 3 unread emails (1 urgent from client)";
-}
-
-async function getCalendarEvents(): Promise<string> {
-  // Example: Use Google Calendar API or MCP tool
-  // Return today's events
-
-  // Placeholder
-  return "- 10:00 Team standup\n- 14:00 Client call";
+async function getWeather(city: string): Promise<string> {
+  try {
+    const res = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=3`);
+    if (!res.ok) return "Weather unavailable";
+    return (await res.text()).trim();
+  } catch {
+    return "Weather unavailable";
+  }
 }
 
 async function getActiveGoals(): Promise<string> {
-  // Load from your persistence layer (Supabase, JSON file, etc.)
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) return "";
 
-  // Placeholder
-  return "- Finish video edit\n- Review PR";
+  try {
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const { data } = await supabase.rpc("get_active_goals");
+    if (!data?.length) return "";
+    return data
+      .map((g: any) => {
+        const deadline = g.deadline ? ` (by ${new Date(g.deadline).toLocaleDateString()})` : "";
+        return `  - ${g.content}${deadline}`;
+      })
+      .join("\n");
+  } catch {
+    return "";
+  }
 }
 
-async function getWeather(): Promise<string> {
-  // Optional: Weather API
-
-  // Placeholder
-  return "Sunny, 22°C";
-}
-
-async function getAINews(): Promise<string> {
-  // Optional: Pull from X/Twitter, RSS, or news API
-  // Use Grok, Perplexity, or web search
-
-  // Placeholder
-  return "- OpenAI released GPT-5\n- Anthropic launches new feature";
+async function getCryptoPrice(token: string): Promise<string> {
+  try {
+    const id = token.toLowerCase() === "qnt" ? "quant-network" : token.toLowerCase();
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,eur&include_24hr_change=true`
+    );
+    if (!res.ok) return `${token}: price unavailable`;
+    const data = await res.json();
+    const info = data[id];
+    if (!info) return `${token}: not found`;
+    const change = info.usd_24h_change?.toFixed(1) || "?";
+    const arrow = parseFloat(change) >= 0 ? "↑" : "↓";
+    return `${token}: $${info.usd?.toFixed(2)} / €${info.eur?.toFixed(2)} (${arrow}${change}% 24h)`;
+  } catch {
+    return `${token}: price unavailable`;
+  }
 }
 
 // ============================================================
-// BUILD BRIEFING
+// BUILD & SEND BRIEFING
 // ============================================================
 
 async function buildBriefing(): Promise<string> {
+  const config = await loadConfig();
+  const briefing = config.briefings.find((b) => b.name === "morning" && b.enabled);
+  if (!briefing) {
+    console.log("Morning briefing is disabled in config.");
+    process.exit(0);
+  }
+
+  const sections = briefing.sections;
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-US", {
+    timeZone: USER_TIMEZONE,
     weekday: "long",
     month: "long",
     day: "numeric",
   });
 
-  const sections: string[] = [];
+  const parts: string[] = [];
 
   // Header
-  sections.push(`🌅 **Good Morning!**\n${dateStr}\n`);
+  const greeting = USER_NAME ? `Good morning, ${USER_NAME}!` : "Good morning!";
+  parts.push(`*${greeting}*\n${dateStr}\n`);
 
-  // Weather (optional)
-  try {
-    const weather = await getWeather();
-    sections.push(`☀️ **Weather**\n${weather}\n`);
-  } catch (e) {
-    console.error("Weather fetch failed:", e);
+  // Generate daily note (carries over todos, fetches email/calendar)
+  if (sections.daily_note?.enabled) {
+    try {
+      const notePath = await generateDailyNote();
+      parts.push(`📝 Daily note created: ${notePath.split("/").pop()}\n`);
+    } catch (error) {
+      console.error("Daily note error:", error);
+    }
+  }
+
+  // Weather
+  if (sections.weather?.enabled) {
+    const weather = await getWeather(sections.weather.city);
+    parts.push(`*☁️ Weather*\n${weather}\n`);
+  }
+
+  // Crypto
+  if (sections.crypto?.enabled && sections.crypto.tokens?.length) {
+    const prices = await Promise.all(
+      sections.crypto.tokens.map((t: string) => getCryptoPrice(t))
+    );
+    parts.push(`*📈 Crypto*\n${prices.join("\n")}\n`);
   }
 
   // Calendar
-  try {
-    const calendar = await getCalendarEvents();
-    if (calendar) {
-      sections.push(`📅 **Today's Schedule**\n${calendar}\n`);
+  if (sections.calendar?.enabled) {
+    const token = await getAccessToken();
+    if (token) {
+      const events = await getTodayEvents();
+      const formatted = formatEvents(events);
+      parts.push(`*📅 Calendar*\n${formatted}\n`);
     }
-  } catch (e) {
-    console.error("Calendar fetch failed:", e);
   }
 
-  // Emails
-  try {
-    const emails = await getUnreadEmails();
-    if (emails) {
-      sections.push(`📧 **Inbox**\n${emails}\n`);
+  // Email (brief — 2 lines max)
+  if (sections.email?.enabled) {
+    const token = await getAccessToken();
+    if (token) {
+      const emails = await getUnreadEmails(sections.email.maxEmails || 5);
+      const formatted = formatEmails(emails);
+      // Keep it short — first 2 lines or summary
+      const emailLines = formatted.split("\n").filter((l: string) => l.trim());
+      const brief = emailLines.slice(0, 3).join("\n");
+      parts.push(`*📧 Email* (${emailLines.length} unread)\n${brief}\n`);
     }
-  } catch (e) {
-    console.error("Email fetch failed:", e);
   }
 
   // Goals
-  try {
+  if (sections.goals?.enabled) {
     const goals = await getActiveGoals();
     if (goals) {
-      sections.push(`🎯 **Active Goals**\n${goals}\n`);
+      parts.push(`*🎯 Goals*\n${goals}\n`);
     }
-  } catch (e) {
-    console.error("Goals fetch failed:", e);
   }
 
-  // AI News (optional)
+  // Carried todos from yesterday
+  const OBSIDIAN_VAULT = process.env.OBSIDIAN_VAULT || join(process.env.HOME || "~", "dev", "obsidian");
+  const todayDate = now.toISOString().split("T")[0];
   try {
-    const news = await getAINews();
-    if (news) {
-      sections.push(`🤖 **AI News**\n${news}\n`);
+    const dailyContent = await readFile(join(OBSIDIAN_VAULT, "daily", `${todayDate}.md`), "utf-8");
+    const todoLines = dailyContent.split("\n").filter((l: string) => l.match(/^- \[ \]/));
+    if (todoLines.length) {
+      parts.push(`*📋 Today's Todos* (${todoLines.length})\n${todoLines.slice(0, 5).join("\n")}\n`);
     }
-  } catch (e) {
-    console.error("News fetch failed:", e);
-  }
+  } catch {}
 
-  // Footer
-  sections.push("---\n_Reply to chat or say \"call me\" for voice briefing_");
+  parts.push("---\n_Reply to update your daily note_");
 
-  return sections.join("\n");
+  return parts.join("\n");
 }
-
-// ============================================================
-// MAIN
-// ============================================================
 
 async function main() {
   console.log("Building morning briefing...");
@@ -172,7 +257,7 @@ async function main() {
   const success = await sendTelegram(briefing);
 
   if (success) {
-    console.log("Briefing sent successfully!");
+    console.log("Briefing sent!");
   } else {
     console.error("Failed to send briefing");
     process.exit(1);
@@ -180,50 +265,3 @@ async function main() {
 }
 
 main();
-
-// ============================================================
-// LAUNCHD PLIST FOR SCHEDULING (macOS)
-// ============================================================
-/*
-Save this as ~/Library/LaunchAgents/com.claude.morning-briefing.plist:
-
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.claude.morning-briefing</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOUR_USERNAME/.bun/bin/bun</string>
-        <string>run</string>
-        <string>examples/morning-briefing.ts</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/claude-telegram-relay</string>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>9</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/tmp/morning-briefing.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/morning-briefing.error.log</string>
-</dict>
-</plist>
-
-Load with: launchctl load ~/Library/LaunchAgents/com.claude.morning-briefing.plist
-*/
-
-// ============================================================
-// CRON FOR SCHEDULING (Linux)
-// ============================================================
-/*
-Add to crontab with: crontab -e
-
-# Run at 9:00 AM every day
-0 9 * * * cd /path/to/claude-telegram-relay && /home/USER/.bun/bin/bun run examples/morning-briefing.ts >> /tmp/morning-briefing.log 2>&1
-*/

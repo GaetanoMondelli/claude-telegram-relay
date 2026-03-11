@@ -1,0 +1,27 @@
+{
+  "briefings": [
+    {
+      "name": "morning",
+      "enabled": true,
+      "cron": "0 8 * * *",
+      "description": "Daily morning briefing",
+      "sections": {
+        "weather": {
+          "enabled": true,
+          "city": "London"
+        },
+        "calendar": {
+          "enabled": true
+        },
+        "email": {
+          "enabled": true,
+          "maxEmails": 10
+        },
+        "goals": {
+          "enabled": true
+        }
+      },
+      "message_style": "concise"
+    }
+  ]
+}

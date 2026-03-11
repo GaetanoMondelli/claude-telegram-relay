@@ -1,173 +1,171 @@
 # Claude Telegram Relay
 
-A personal AI assistant on Telegram powered by Claude Code.
+Personal AI assistant running on a Raspberry Pi, powered by Claude Code and accessible through Telegram. Acts as a central hub: chat, file manager (NAS), Obsidian knowledge base, code sessions, email, calendar, and web search.
 
-You message it. Claude responds. Text, photos, documents, voice. It remembers across sessions, checks in proactively, and runs in the background.
+Built with Bun, grammY, and Claude Code CLI. Uses Supabase for persistent memory with semantic search.
 
-**Created by [Goda Go](https://youtube.com/@GodaGo)** | [AI Productivity Hub Community](https://skool.com/autonomee)
+## Architecture
 
 ```
-You ──▶ Telegram ──▶ Relay ──▶ Claude Code CLI ──▶ Response
+┌──────────────────────────────────────────────────────────┐
+│  Raspberry Pi                                            │
+│                                                          │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────────────┐  │
+│  │ Telegram Bot  │  │ Claude CLI│  │ MCP Server       │  │
+│  │ (grammY)      │──│ (spawned) │──│ email, calendar, │  │
+│  │               │  │           │  │ notes, search,   │  │
+│  └──────────────┘  └───────────┘  │ weather, files   │  │
+│                                    └──────────────────┘  │
+│  ┌────────────┐  ┌───────────┐  ┌────────────────────┐  │
+│  │ Filebrowser │  │ Syncthing │  │ Samba              │  │
+│  │ :8080       │  │ :8384     │  │ :445               │  │
+│  └────────────┘  └───────────┘  │ shares: storage,   │  │
+│                                  │ obsidian, dev      │  │
+│  ┌────────────┐                  └────────────────────┘  │
+│  │ Tailscale  │ VPN mesh for remote access               │
+│  └────────────┘                                          │
+└──────────────────────────────────────────────────────────┘
+        │              │              │              │
+   Telegram        GitHub         Google        Supabase
+   (phone)       (git sync)   (Gmail, Cal)    (memory, embeddings)
                                     │
-                              Supabase (memory)
+                              Obsidian vault
+                           (synced via Syncthing)
 ```
 
-## What You Get
+**Access methods:** Telegram chat, Filebrowser web UI, SMB file shares, Tailscale VPN from anywhere.
 
-- **Relay**: Send messages on Telegram, get Claude responses back
-- **Memory**: Semantic search over conversation history, persistent facts and goals via Supabase
-- **Proactive**: Smart check-ins that know when to reach out (and when not to)
-- **Briefings**: Daily morning summary with goals and schedule
-- **Voice**: Transcribe voice messages (Groq cloud or local Whisper — your choice)
-- **Always On**: Runs in the background, starts on boot, restarts on crash
-- **Guided Setup**: Claude Code reads CLAUDE.md and walks you through everything
+## Features
 
-## Quick Start
-
-### Prerequisites
-
-- **[Bun](https://bun.sh)** runtime (`curl -fsSL https://bun.sh/install | bash`)
-- **[Claude Code](https://claude.ai/claude-code)** CLI installed and authenticated
-- A **Telegram** account
-
-### Option A: Guided Setup (Recommended)
-
-```bash
-git clone https://github.com/godagoo/claude-telegram-relay.git
-cd claude-telegram-relay
-claude
-```
-
-Claude Code reads `CLAUDE.md` and walks you through setup conversationally:
-
-1. Create a Telegram bot via BotFather
-2. Set up Supabase for persistent memory
-3. Personalize your profile
-4. Test the bot
-5. Configure always-on services
-6. Set up proactive check-ins and briefings
-7. Add voice transcription (optional)
-
-### Option B: Manual Setup
-
-```bash
-git clone https://github.com/godagoo/claude-telegram-relay.git
-cd claude-telegram-relay
-bun run setup          # Install deps, create .env
-# Edit .env with your API keys
-bun run test:telegram  # Verify bot token
-bun run test:supabase  # Verify database
-bun run start          # Start the bot
-```
+- **Chat with Claude** -- text, voice messages, photos, documents. Context-aware with conversation history.
+- **File manager / NAS** -- `/files` to browse, upload files via Telegram, access via Samba or Filebrowser web UI.
+- **Obsidian notes** -- `/note` to create, `/notes` to search. Natural language note creation via MCP tools. Vault synced with Syncthing.
+- **Code sessions** -- `/code <project>` for prompt mode through Telegram, `/code remote <project>` to connect via claude.ai/code.
+- **Email & Calendar** -- Gmail inbox (read-only), Google Calendar (read + create events) via MCP tools.
+- **Web search** -- `/search` or just ask naturally. Uses DuckDuckGo.
+- **Service management** -- `/service start|stop|restart` for samba, filebrowser, syncthing via systemctl.
+- **Access links** -- `/links` shows Tailscale and LAN URLs for all services.
+- **Git sync** -- `/sync` pulls, commits local changes, and pushes Obsidian vault (or any ~/dev repo).
+- **Daily briefings** -- scheduled morning messages with weather, calendar, email, goals.
+- **Memory system** -- Supabase-backed semantic search over conversations, persistent facts and goals.
+- **Voice transcription** -- Groq (cloud, free) or local Whisper via whisper-cpp.
 
 ## Commands
 
-```bash
-# Run
-bun run start              # Start the bot
-bun run dev                # Start with auto-reload
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all capabilities |
+| `/status` | Services, connections, and system status |
+| `/code` | List ~/dev projects |
+| `/code <project>` | Start code session via Telegram |
+| `/code remote <project>` | Start session for claude.ai/code |
+| `/code stop` | End active code session |
+| `/files` | Browse ~/storage |
+| `/files <path>` | List directory or read file |
+| `/files search <query>` | Find files by name |
+| `/files download <path>` | Get file via Telegram |
+| `/note <title>` | Create an Obsidian note |
+| `/notes` | List recent notes |
+| `/notes search <query>` | Search vault content |
+| `/notes read <name>` | Read a specific note |
+| `/email` | Check unread Gmail |
+| `/calendar` | Today's calendar events |
+| `/search <query>` | Web search (DuckDuckGo) |
+| `/dev` | Browse ~/dev projects (read-only) |
+| `/dev <path>` | Browse project files |
+| `/sync` | Git sync Obsidian vault |
+| `/sync <repo>` | Git sync any ~/dev repo |
+| `/links` | Show Tailscale + LAN access URLs |
+| `/service` | Show service status |
+| `/service start\|stop\|restart <name>` | Control a service (samba, filebrowser, syncthing, all) |
+| `/clear` | Clear chat history |
+| `/reset` | Full reset -- nuke all sessions |
 
-# Setup & Testing
-bun run setup              # Install dependencies, create .env
-bun run test:telegram      # Test Telegram connection
-bun run test:supabase      # Test Supabase connection
-bun run setup:verify       # Full health check
+Natural language also works: "search latest bun release", "add a note about...", "check my email".
 
-# Always-On Services
-bun run setup:launchd      # Configure launchd (macOS)
-bun run setup:services     # Configure PM2 (Windows/Linux)
+## MCP Server Tools
 
-# Use --service flag for specific services:
-# bun run setup:launchd -- --service relay
-# bun run setup:launchd -- --service all    (relay + checkin + briefing)
-```
+The MCP server (`src/mcp-server.ts`) exposes tools that Claude calls automatically:
+
+| Tool | Description |
+|------|-------------|
+| `check_email` | Fetch unread Gmail |
+| `check_calendar` | Fetch today's calendar events |
+| `create_calendar_event` | Create event with optional Meet link |
+| `web_search` | Search via DuckDuckGo |
+| `browse_dev` | Browse ~/dev projects (read-only) |
+| `create_note` | Create Obsidian note |
+| `read_note` | Read Obsidian note |
+| `edit_note` | Append to or replace note content |
+| `search_notes` | Search vault by title/content |
+| `list_notes` | List notes in vault |
+| `get_weather` | Current weather for a city |
+
+## Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| Filebrowser | 8080 | Web-based file manager for ~/storage |
+| Syncthing | 8384 | File sync across devices (Obsidian vault) |
+| Samba | 445 | Native file sharing -- shares: `storage`, `obsidian`, `dev` |
+| Tailscale | -- | VPN mesh network for remote access from anywhere |
+
+All services are managed via systemctl and controllable through the `/service` bot command.
+
+## Setup
+
+See [CLAUDE.md](CLAUDE.md) for the interactive setup guide. Run `claude` in this directory and it walks you through everything step by step:
+
+1. Telegram bot (BotFather)
+2. Supabase (memory + semantic search)
+3. Profile personalization
+4. Test the bot
+5. Always-on services (PM2/systemd)
+6. Scheduled briefings
+7. Voice transcription
+8. Google integration (Gmail + Calendar)
 
 ## Project Structure
 
 ```
-CLAUDE.md                    # Guided setup (Claude Code reads this)
 src/
-  relay.ts                   # Core relay daemon
-  transcribe.ts              # Voice transcription (Groq / whisper.cpp)
-  memory.ts                  # Persistent memory (facts, goals, semantic search)
-examples/
-  smart-checkin.ts           # Proactive check-ins
-  morning-briefing.ts        # Daily briefing
-  memory.ts                  # Memory persistence patterns
+  relay.ts           # Core Telegram bot and command handlers
+  mcp-server.ts      # MCP server with tools for Claude
+  memory.ts          # Supabase memory (facts, goals, semantic search)
+  gmail.ts           # Gmail API (read-only)
+  calendar.ts        # Google Calendar API (read + create)
+  google-auth.ts     # OAuth2 token management
+  transcribe.ts      # Voice transcription (Groq / whisper-cpp)
 config/
-  profile.example.md         # Personalization template
+  profile.md         # User profile loaded on every message
+  scheduled.json     # Briefing schedule config
+examples/
+  morning-briefing.ts  # Daily briefing script
+  smart-checkin.ts     # Proactive check-in script
 db/
-  schema.sql                 # Supabase database schema
+  schema.sql         # Supabase database schema
 supabase/
   functions/
-    embed/index.ts           # Auto-embedding Edge Function
-    search/index.ts          # Semantic search Edge Function
+    embed/           # Auto-embedding Edge Function
+    search/          # Semantic search Edge Function
 setup/
-  install.ts                 # Prerequisites checker
-  test-telegram.ts           # Telegram connectivity test
-  test-supabase.ts           # Supabase connectivity test
-  test-voice.ts              # Voice transcription test
-  configure-launchd.ts       # macOS service setup
-  configure-services.ts      # Windows/Linux service setup
-  verify.ts                  # Full health check
-daemon/
-  launchagent.plist          # macOS daemon template
-  claude-relay.service       # Linux systemd template
-  README-WINDOWS.md          # Windows options
+  install.ts         # Prerequisites checker
+  setup-google.ts    # Google OAuth2 setup
+  verify.ts          # Full health check
 ```
 
-## How It Works
+## Future Ideas
 
-The relay does three things:
-1. **Listen** for Telegram messages (via grammY)
-2. **Spawn** Claude Code CLI with context (your profile, memory, time)
-3. **Send** the response back on Telegram
-
-Claude Code gives you full power: tools, MCP servers, web search, file access. Not just a model — an AI with hands.
-
-Your bot remembers between sessions via Supabase. Every message gets an embedding (via OpenAI, stored in Supabase) so the bot can semantically search past conversations for relevant context. It also tracks facts and goals — Claude detects when you mention something worth remembering and stores it automatically.
-
-## Environment Variables
-
-See `.env.example` for all options. The essentials:
-
-```bash
-# Required
-TELEGRAM_BOT_TOKEN=     # From @BotFather
-TELEGRAM_USER_ID=       # From @userinfobot
-SUPABASE_URL=           # From Supabase dashboard
-SUPABASE_ANON_KEY=      # From Supabase dashboard
-
-# Recommended
-USER_NAME=              # Your first name
-USER_TIMEZONE=          # e.g., America/New_York
-
-# Optional — Voice
-VOICE_PROVIDER=         # "groq" or "local"
-GROQ_API_KEY=           # For Groq (free at console.groq.com)
-
-# Note: OpenAI key for embeddings is stored in Supabase
-# (Edge Function secrets), not in this .env file.
-```
-
-## What's Next
-
-This relay is step one. It works standalone, forever. But it's also the foundation for something much bigger.
-
-200+ builders are running the full version right now — their AI calls them when something is urgent, runs board meetings with six specialized agents, sends emails with approval buttons, and never goes offline.
-
-The key: it's not just about features. It's about **mastering Claude Code** — CLAUDE.md files, MCP servers, hooks, skills. That's what turns a chatbot into real AI infrastructure. The community and course teach you that.
-
-**[Read the full story → WHATS-NEXT.md](WHATS-NEXT.md)**
-
-**Free course (6 lessons):** [autonomee.ai/telegram-bot-course](https://autonomee.ai/telegram-bot-course)
-**Subscribe on YouTube:** [youtube.com/@GodaGo](https://youtube.com/@GodaGo)
-**Join the community:** [skool.com/autonomee](https://skool.com/autonomee)
+- **Obsidian LiveSync** -- CouchDB-based real-time vault sync (replace Syncthing for instant sync)
+- **Voice responses** -- ElevenLabs TTS so the bot speaks back
+- **Telegram inline buttons** -- confirmation prompts before taking actions (send email, create event)
+- **Auto-backup cron** -- scheduled git push for all ~/dev repos
+- **Health integrations** -- Apple Health, Fitbit API for automatic step/sleep tracking in daily notes
+- **Weekly AI summaries** -- auto-generated weekly review from daily notes and conversations
+- **Multi-agent system** -- specialized agents for research, content, finance routed via Telegram topics
+- **Cloudflare Tunnel** -- public access to services without requiring Tailscale on every device
+- **Home automation** -- Home Assistant integration for controlling lights, sensors, etc. via Telegram
 
 ## License
 
-MIT — Take it, customize it, make it yours.
-
----
-
-Built by [Goda Go](https://youtube.com/@GodaGo)
+MIT
