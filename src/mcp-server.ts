@@ -362,17 +362,38 @@ async function handleCreateCalendarEvent(args: any): Promise<string> {
 // Obsidian Tools
 // ============================================================
 
-async function gitSyncVault(): Promise<void> {
+async function gitSyncVault(): Promise<string> {
   try {
+    // Pull first to avoid push rejection
+    const pull = spawn(["git", "pull", "--rebase"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
+    const pullErr = (await new Response(pull.stderr).text()).trim();
+    const pullCode = await pull.exited;
+    if (pullCode !== 0) return `Git pull failed: ${pullErr}`;
+
+    // Check for local changes
+    const status = spawn(["git", "status", "--porcelain"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
+    const changes = (await new Response(status.stdout).text()).trim();
+    await status.exited;
+
+    if (!changes) return "No changes to sync.";
+
     const add = spawn(["git", "add", "-A"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
     await add.exited;
-    const commit = spawn(["git", "commit", "-m", `Auto sync ${new Date().toISOString().split("T")[0]}`], {
+
+    const dateStr = new Date().toISOString().split("T")[0];
+    const commit = spawn(["git", "commit", "-m", `Auto sync ${dateStr}`], {
       cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe",
     });
     await commit.exited;
+
     const push = spawn(["git", "push"], { cwd: OBSIDIAN_VAULT, stdout: "pipe", stderr: "pipe" });
-    await push.exited;
-  } catch {}
+    const pushErr = (await new Response(push.stderr).text()).trim();
+    const pushCode = await push.exited;
+
+    return pushCode === 0 ? "Synced OK." : `Git push failed: ${pushErr}`;
+  } catch (err: any) {
+    return `Git sync error: ${err.message}`;
+  }
 }
 
 async function handleCreateNote(args: any): Promise<string> {
@@ -394,10 +415,10 @@ async function handleCreateNote(args: any): Promise<string> {
   const dateStr = new Date().toISOString().split("T")[0];
   const note = `---\ntitle: "${title}"\ndate: ${dateStr}\ntags: []\n---\n\n${content}\n`;
   await writeFile(filePath, note);
-  await gitSyncVault();
+  const syncResult = await gitSyncVault();
 
   const relPath = folder ? `${folder}/${fileName}` : fileName;
-  return `Note created: ${relPath}`;
+  return `Note created: ${relPath} (${syncResult})`;
 }
 
 async function handleReadNote(args: any): Promise<string> {
@@ -478,8 +499,8 @@ async function handleEditNote(args: any): Promise<string> {
     return "Provide 'append' or 'replace_content'.";
   }
 
-  await gitSyncVault();
-  return `Note updated: ${notePath}`;
+  const syncResult = await gitSyncVault();
+  return `Note updated: ${notePath} (${syncResult})`;
 }
 
 async function handleListNotes(args: any): Promise<string> {
@@ -617,8 +638,8 @@ async function handleAddToDaily(args: any): Promise<string> {
           rebuilt.push(lines[k]);
         }
         await writeFile(filePath, rebuilt.join("\n"));
-        await gitSyncVault();
-        return `Added to health in daily note.`;
+        const syncResult = await gitSyncVault();
+        return `Added to health in daily note. (${syncResult})`;
       }
     }
   }
@@ -646,8 +667,8 @@ async function handleAddToDaily(args: any): Promise<string> {
   }
 
   await writeFile(filePath, result.join("\n"));
-  await gitSyncVault();
-  return `Added to ${section} in daily note.`;
+  const syncResult2 = await gitSyncVault();
+  return `Added to ${section} in daily note. (${syncResult2})`;
 }
 
 async function handleGetDaily(args: any): Promise<string> {
