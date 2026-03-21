@@ -1,0 +1,7 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/messages/route": "app/api/messages/route.js",
+  "/api/telegram/route": "app/api/telegram/route.js",
+  "/page": "app/page.js"
+}
