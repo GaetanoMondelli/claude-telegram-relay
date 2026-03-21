@@ -251,7 +251,7 @@ async function callClaude(
   // Allow MCP tools without confirmation
   args.push(
     "--allowedTools",
-    "mcp__relay-tools__check_email,mcp__relay-tools__check_calendar,mcp__relay-tools__create_calendar_event,mcp__relay-tools__web_search,mcp__relay-tools__browse_dev,mcp__relay-tools__get_weather,mcp__relay-tools__create_note,mcp__relay-tools__read_note,mcp__relay-tools__search_notes,mcp__relay-tools__edit_note,mcp__relay-tools__list_notes,mcp__relay-tools__add_to_daily,mcp__relay-tools__get_daily,mcp__relay-tools__update_weekly"
+    "Bash,mcp__relay-tools__check_email,mcp__relay-tools__check_calendar,mcp__relay-tools__create_calendar_event,mcp__relay-tools__web_search,mcp__relay-tools__browse_dev,mcp__relay-tools__get_weather,mcp__relay-tools__create_note,mcp__relay-tools__read_note,mcp__relay-tools__search_notes,mcp__relay-tools__edit_note,mcp__relay-tools__list_notes,mcp__relay-tools__add_to_daily,mcp__relay-tools__get_daily,mcp__relay-tools__update_weekly"
   );
 
   console.log(`Calling Claude: ${prompt.substring(0, 50)}...`);
