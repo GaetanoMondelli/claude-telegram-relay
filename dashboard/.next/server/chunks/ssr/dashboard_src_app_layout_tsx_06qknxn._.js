@@ -1,3 +1,0 @@
-module.exports=[82726,a=>{"use strict";var b=a.i(31696);a.s(["default",0,function({children:a}){return(0,b.jsx)("html",{lang:"en",className:"dark",children:(0,b.jsx)("body",{className:"bg-zinc-950 text-zinc-100 min-h-screen",children:a})})},"metadata",0,{title:"Relay Dashboard",description:"Claude Telegram Relay control panel"}])},42209,a=>{a.n(a.i(82726))}];
-
-//# sourceMappingURL=dashboard_src_app_layout_tsx_06qknxn._.js.map
