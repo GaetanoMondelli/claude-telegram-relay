@@ -46,7 +46,18 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-2xl font-bold mb-6">Relay Dashboard</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">Relay Dashboard</h1>
+        <button
+          onClick={async () => {
+            await fetch("/api/auth/logout", { method: "POST" });
+            window.location.href = "/login";
+          }}
+          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+        >
+          Logout
+        </button>
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-2 mb-6">

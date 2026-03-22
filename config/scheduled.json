@@ -1,0 +1,34 @@
+{
+  "briefings": [
+    {
+      "name": "morning",
+      "enabled": true,
+      "cron": "0 8 * * *",
+      "description": "Daily morning briefing with daily note, crypto, weather",
+      "sections": {
+        "daily_note": {
+          "enabled": true
+        },
+        "weather": {
+          "enabled": true,
+          "city": "London"
+        },
+        "crypto": {
+          "enabled": true,
+          "tokens": ["QNT"]
+        },
+        "calendar": {
+          "enabled": true
+        },
+        "email": {
+          "enabled": true,
+          "maxEmails": 5
+        },
+        "goals": {
+          "enabled": true
+        }
+      },
+      "message_style": "concise"
+    }
+  ]
+}

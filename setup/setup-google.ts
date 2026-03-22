@@ -8,6 +8,17 @@
 
 import { getAuthUrl, exchangeCode, loadTokens, startCallbackServer } from "../src/google-auth.ts";
 
+function readCodeFromStdin(): Promise<string> {
+  return new Promise((resolve) => {
+    process.stdin.setEncoding("utf-8");
+    process.stdout.write("Paste code here: ");
+    process.stdin.on("data", (data: string) => {
+      const code = data.trim();
+      if (code) resolve(code);
+    });
+  });
+}
+
 async function main() {
   console.log("=== Google OAuth2 Setup (Read-Only) ===\n");
 
@@ -41,14 +52,24 @@ async function main() {
     process.exit(1);
   }
 
-  console.log("Starting local callback server on port 3456...\n");
   console.log("Open this URL in your browser:\n");
   console.log(authUrl);
-  console.log("\nSign in, authorize read-only access, and you'll be redirected back.\n");
-  console.log("Waiting for authorization...");
+  console.log("\nSign in and authorize read-only access.\n");
+
+  // Try local callback server first, fall back to manual code paste
+  console.log("Starting local callback server on port 3456...");
+  console.log("If the redirect doesn't work (e.g. running on a remote Pi),");
+  console.log("copy the 'code' parameter from the URL bar after redirect.\n");
+  console.log("Waiting for authorization (or paste code below)...\n");
 
   try {
-    const code = await startCallbackServer();
+    // Race between callback server and manual stdin input
+    const codePromise = Promise.race([
+      startCallbackServer(),
+      readCodeFromStdin(),
+    ]);
+
+    const code = await codePromise;
     console.log("Code received! Exchanging for tokens...");
 
     const success = await exchangeCode(code);

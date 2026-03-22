@@ -74,6 +74,7 @@ async function loadConfig(): Promise<BriefingConfig> {
 
 async function sendTelegram(message: string): Promise<boolean> {
   try {
+    // Try with Markdown first
     const response = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
       {
@@ -86,7 +87,22 @@ async function sendTelegram(message: string): Promise<boolean> {
         }),
       }
     );
-    return response.ok;
+    if (response.ok) return true;
+
+    // Markdown failed — retry as plain text (dynamic content often has unescaped chars)
+    console.error("Markdown parse failed, sending as plain text...");
+    const fallback = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: CHAT_ID,
+          text: message.replace(/[*_`\[]/g, ""),
+        }),
+      }
+    );
+    return fallback.ok;
   } catch (error) {
     console.error("Telegram error:", error);
     return false;
